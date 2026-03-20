@@ -759,7 +759,24 @@ def main():
     with open(json_path, "r", encoding="utf-8") as f:
         companies = json.load(f)
 
-    print(f"Loaded {len(companies)} companies")
+    print(f"Loaded {len(companies)} entries")
+
+    # ── Deduplicate by company number ───────────────────────────────────────
+    seen_numbers = set()
+    deduped = []
+    duplicates_removed = 0
+    for c in companies:
+        cn = c.get("company_number", "")
+        if cn and cn in seen_numbers:
+            duplicates_removed += 1
+            continue
+        if cn:
+            seen_numbers.add(cn)
+        deduped.append(c)
+
+    companies = deduped
+    print(f"After deduplication: {len(companies)} unique companies "
+          f"({duplicates_removed} duplicates removed)")
 
     # Run all analyses
     print_summary_dashboard(companies)
