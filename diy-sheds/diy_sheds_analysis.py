@@ -25,6 +25,8 @@ from collections import Counter, defaultdict
 from itertools import combinations
 from pathlib import Path
 
+import pandas as pd
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  SIC CODE REFERENCE
@@ -613,6 +615,130 @@ def print_summary_dashboard(companies):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+#  EXCEL EXPORT
+# ═══════════════════════════════════════════════════════════════════════════
+
+def export_to_excel(companies, sic_counts, keyword_counts, category_counts,
+                    combo_counts, pair_counts, output_path):
+    """Export all analysis results to a multi-sheet Excel file."""
+
+    found = [c for c in companies if c.get("ch_found")]
+
+    with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
+
+        # Sheet 1: All companies (raw enriched data)
+        rows = []
+        for c in companies:
+            name = c.get("company_name") or c.get("original_name", "")
+            cats = categorize_name(name)
+            rows.append({
+                "Original Name": c.get("original_name", ""),
+                "CH Company Name": c.get("company_name", ""),
+                "Company Number": c.get("company_number", ""),
+                "Status": c.get("company_status", ""),
+                "SIC Codes": c.get("sic_codes", ""),
+                "Company Type": c.get("company_type", ""),
+                "Date Created": c.get("date_of_creation", ""),
+                "Date Ceased": c.get("date_of_cessation", ""),
+                "Postcode": c.get("postal_code", ""),
+                "Locality": c.get("locality", ""),
+                "Region": c.get("region", ""),
+                "Address": c.get("registered_address", ""),
+                "Officer Count": c.get("officer_count", ""),
+                "Has Charges": c.get("has_charges", ""),
+                "Insolvency History": c.get("has_insolvency_history", ""),
+                "Accounts Overdue": c.get("accounts_overdue", ""),
+                "Keyword Categories": ", ".join(cats),
+                "Found in CH": c.get("ch_found", False),
+            })
+        pd.DataFrame(rows).to_excel(writer, sheet_name="All Companies", index=False)
+
+        # Sheet 2: SIC Code frequency
+        sic_rows = [{"SIC Code": code, "Count": count,
+                      "% of Companies": round(count / len(found) * 100, 1) if found else 0,
+                      "Description": get_sic_description(code)}
+                     for code, count in sic_counts.most_common()]
+        pd.DataFrame(sic_rows).to_excel(writer, sheet_name="SIC Codes", index=False)
+
+        # Sheet 3: Keyword frequency
+        noise = {"company", "group", "holdings", "services", "enterprises",
+                 "trading", "international", "management", "solutions", "properties"}
+        kw_rows = [{"Keyword": kw, "Count": count,
+                     "% of Companies": round(count / len(companies) * 100, 1)}
+                    for kw, count in keyword_counts.most_common()
+                    if kw not in noise]
+        pd.DataFrame(kw_rows).to_excel(writer, sheet_name="Keywords", index=False)
+
+        # Sheet 4: Keyword categories
+        cat_rows = [{"Category": cat, "Count": count,
+                      "% of Companies": round(count / len(companies) * 100, 1)}
+                     for cat, count in category_counts.most_common()]
+        pd.DataFrame(cat_rows).to_excel(writer, sheet_name="Keyword Categories", index=False)
+
+        # Sheet 5: SIC + Keyword combinations
+        combo_rows = [{"SIC + Keyword": combo, "Count": count,
+                        "SIC Code": combo.split(" + ")[0],
+                        "SIC Description": get_sic_description(combo.split(" + ")[0]),
+                        "Keyword Category": combo.split(" + ")[1] if " + " in combo else ""}
+                       for combo, count in combo_counts.most_common()]
+        pd.DataFrame(combo_rows).to_excel(writer, sheet_name="SIC+Keyword Combos", index=False)
+
+        # Sheet 6: SIC co-occurrence pairs
+        pair_rows = [{"SIC Code A": a, "SIC Code B": b, "Count": count,
+                       "Description A": get_sic_description(a),
+                       "Description B": get_sic_description(b)}
+                      for (a, b), count in pair_counts.most_common()]
+        pd.DataFrame(pair_rows).to_excel(writer, sheet_name="SIC Co-occurrence", index=False)
+
+        # Sheet 7: Status breakdown
+        status_rows = []
+        for c in found:
+            codes = [s.strip() for s in c.get("sic_codes", "").split(",") if s.strip()]
+            status_rows.append({
+                "Company Name": c.get("company_name", ""),
+                "Status": c.get("company_status", ""),
+                "SIC Codes": c.get("sic_codes", ""),
+                "Date Created": c.get("date_of_creation", ""),
+                "Date Ceased": c.get("date_of_cessation", ""),
+            })
+        pd.DataFrame(status_rows).to_excel(writer, sheet_name="Status Detail", index=False)
+
+        # Sheet 8: Chain detection
+        name_groups = defaultdict(list)
+        for c in companies:
+            def norm(n):
+                if not n: return ""
+                n = n.strip().upper()
+                for s in [" LTD", " LIMITED", " PLC", " LLP"]:
+                    if n.endswith(s): n = n[:-len(s)].strip()
+                return n
+            cname = norm(c.get("company_name") or c.get("original_name", ""))
+            if cname:
+                name_groups[cname].append(c)
+
+        chain_rows = []
+        for name, entries in sorted(name_groups.items(), key=lambda x: -len(x[1])):
+            if len(entries) < 2:
+                continue
+            statuses = Counter(e.get("company_status", "?") for e in entries)
+            chain_rows.append({
+                "Chain Name": name,
+                "Locations": len(entries),
+                "Active": statuses.get("active", 0),
+                "Dissolved": statuses.get("dissolved", 0),
+                "Company Number": entries[0].get("company_number", ""),
+            })
+        pd.DataFrame(chain_rows).to_excel(writer, sheet_name="Chains", index=False)
+
+        # Sheet 9: Regional breakdown
+        region_counts = Counter(c.get("region", "Unknown") or "Unknown" for c in found)
+        region_rows = [{"Region": r, "Count": count,
+                         "% of Found": round(count / len(found) * 100, 1) if found else 0}
+                        for r, count in region_counts.most_common()]
+        pd.DataFrame(region_rows).to_excel(writer, sheet_name="Regions", index=False)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 #  MAIN
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -637,12 +763,12 @@ def main():
 
     # Run all analyses
     print_summary_dashboard(companies)
-    analyze_sic_codes(companies)
-    analyze_keywords(companies)
-    analyze_keyword_categories(companies)
-    analyze_sic_keyword_combinations(companies)
-    analyze_sic_cooccurrence(companies)
-    analyze_status(companies)
+    sic_counts = analyze_sic_codes(companies)
+    keyword_counts = analyze_keywords(companies)
+    category_counts = analyze_keyword_categories(companies)
+    combo_counts = analyze_sic_keyword_combinations(companies)
+    pair_counts = analyze_sic_cooccurrence(companies)
+    status_counts = analyze_status(companies)
     analyze_chains(companies)
     analyze_regions(companies)
     analyze_financial_health(companies)
@@ -652,6 +778,12 @@ def main():
     print("\n" + "=" * 80)
     print("  END OF ANALYSIS")
     print("=" * 80 + "\n")
+
+    # ── Export to Excel ─────────────────────────────────────────────────────
+    output_path = Path(__file__).resolve().parent / "diy_sheds_analysis.xlsx"
+    export_to_excel(companies, sic_counts, keyword_counts, category_counts,
+                    combo_counts, pair_counts, output_path)
+    print(f"\nExcel report saved: {output_path}")
 
 
 if __name__ == "__main__":
