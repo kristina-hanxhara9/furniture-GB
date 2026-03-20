@@ -138,6 +138,8 @@ SCORE_KEEP = 2      # net score >= 2 → auto-keep
 SCORE_REVIEW = 0    # net score 0–1 → flag for manual review
                     # net score < 0 → discard
 
+ITEMS_PER_PAGE = 100  # results per API page
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  HELPER FUNCTIONS
@@ -240,14 +242,14 @@ def fetch_full_profile(company_number):
     return api_get(f"{BASE_URL}/company/{company_number}") or {}
 
 
-def search_by_sic(sic_code, start_index=0, items_per_page=100):
+def search_by_sic(sic_code, start_index=0):
     """Search for companies by SIC code using advanced search."""
     data = api_get(
         f"{BASE_URL}/advanced-search/companies",
         params={
             "sic_codes": sic_code,
             "company_status": "active",
-            "size": items_per_page,
+            "size": ITEMS_PER_PAGE,
             "start_index": start_index,
         },
     )
@@ -391,8 +393,8 @@ def run():
                 print(f"    [{flag}] {profile.get('company_name', name)} "
                       f"(score={net}, officers={officer_count})")
 
-            start += items_per_page
-            if len(companies) < items_per_page:
+            start += ITEMS_PER_PAGE
+            if len(companies) < ITEMS_PER_PAGE:
                 break
 
     # ── Sort by score and export ────────────────────────────────────────────
